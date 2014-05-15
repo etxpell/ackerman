@@ -131,9 +131,29 @@ stop_cpu_utilisation() ->
 
 
 print_utilization(L) ->
-    Fmt = tl(tl(lists:flatten(["  ~p<~4.2f>" || _ <- L]))),
-    Args = lists:flatten([tuple_to_list(T) || T<- L]),
-    io:format("load: "++Fmt++"~n", Args).
+    maybe_print_cpu_util_header(L),
+    Fmt = "  ~6.2f"++lists:flatten(["  ~4.2f" || _ <- tl(L)]),
+    Args = lists:flatten([element(2,T) || T<- L]),
+    io:format(Fmt++"~n", Args).
+
+maybe_print_cpu_util_header(L) ->
+    maybe_print_cpu_util_header(should_we_print_header(), L).
+maybe_print_cpu_util_header(true, L) ->
+    Fmt = " ~6w "++lists:flatten(["  ~3w " || _ <- tl(L)]),
+    Args = lists:flatten([element(1,T) || T<- L]),
+    io:format(Fmt++"~n", Args);
+maybe_print_cpu_util_header(_, _) ->
+    ok.
+
+
+should_we_print_header() ->
+    OldC = case get(cpu_util_count) of
+	       N when is_integer(N) -> N;
+	       _ -> 0
+	   end,
+    put(cpu_util_count, OldC+1),
+    (OldC rem 10) == 0.
+
 
 calc_scheduler_utilization(Ts0, Ts1) ->
     lists:map(fun({{I, A0, T0}, {I, A1, T1}}) ->
