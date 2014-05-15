@@ -114,7 +114,7 @@ get_si(Tag) ->
 %%---------------
 %% Start checking cpu utilization
 start_cpu_utilisation() ->
-    start_cpu_utilisation(1000).
+    start_cpu_utilisation(2000).
 start_cpu_utilisation(T) ->
     erlang:system_flag(scheduler_wall_time, true),
     InitTs = get_scheduler_wall_time(),
