@@ -298,16 +298,17 @@ loop_now(Id, N) ->
 
 %%---------------
 %% no locking/0 stuff
-init_no_lock(N) ->
-    io:format("no lock ~p started~n", [N]),
-    loop_no_lock(N).
+init_no_lock(Id) ->
+    io:format("no lock ~p started~n", [Id]),
+    loop_no_lock(Id, 1).
 
-loop_no_lock(N) ->
-    receive stop -> io:format("no lock ~p stopped~n", [N]), ets_del({proc, N}), ok
-    after 0 -> loop_no_lock(N)
+loop_no_lock(Id, N) ->
+    receive {stop, From} -> acknowledge_stop(From, Id, N)
+    after 0 -> loop_no_lock(Id, N+1)
     end.
 
-
+%% 4cores  116.293.893
+%% 8 cores 143.724.169
 
 %%---------------
 %% procs framework
