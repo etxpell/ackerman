@@ -5,6 +5,10 @@
 
 -export([r/0]).
 -export([r/1]).
+-export([run/1]).
+-export([run/2]).
+-export([run/3]).
+-export([stop_run/0]).
 
 -export([start_ets/1]).
 -export([start_ets/2]).
@@ -23,6 +27,15 @@
 -export([print_system_info/0]).
 
 
+run(N) when is_integer(N) ->
+    run(N, ets).
+run(N, Method) ->
+    run(N, Method, []).
+run(N, Method, Opts) when is_integer(N), is_atom(Method), is_list(Opts) ->
+    start_procs(N, [{method, Method}|Opts]).
+
+stop_run() ->
+    stop_procs().
 
 
 r() -> r(2).
@@ -135,14 +148,16 @@ stop_cpu_utilisation() ->
 
 print_utilization(L) ->
     maybe_print_cpu_util_header(L),
-    Fmt = "  ~6.2f"++lists:flatten(["  ~4.2f" || _ <- tl(L)]),
-    Args = lists:flatten([element(2,T) || T<- L]),
-    io:format(Fmt++"~n", Args).
+    %% L contains one entry for each core, plus one for the total
+    Ncores = length(L) -1, 
+    Fmt = "  ~6.2f (~2w%)"++lists:flatten(["  ~4.2f" || _ <- tl(L)]),
+    [Tot|Args] = lists:flatten([element(2,T) || T<- L]),
+    io:format(Fmt++"~n", [Tot, round((100*Tot) / Ncores) | Args]).
 
 maybe_print_cpu_util_header(L) ->
     maybe_print_cpu_util_header(should_we_print_header(), L).
 maybe_print_cpu_util_header(true, L) ->
-    Fmt = " ~6w "++lists:flatten(["  ~3w " || _ <- tl(L)]),
+    Fmt = " ~12w "++lists:flatten(["  ~3w " || _ <- tl(L)]),
     Args = lists:flatten([element(1,T) || T<- L]),
     io:format(Fmt++"~n", Args);
 maybe_print_cpu_util_header(_, _) ->
@@ -216,59 +231,10 @@ init_ets(N) ->
 
 loop_ets(N) ->
     ets_inc(counter),
-    _V = ets_lookup(n),
 %%    erlang:yield(),
     receive stop -> io:format("ets ~p stopped~n", [N]), ets_del({proc, N}), ok
     after 0 -> loop_ets(N)
     end.
-
-
-%% start_ets(N) ->
-%%     start_ets(N, []).
-%% start_ets(N, Opts) ->
-%%     catch ets:delete(tab1),
-%%     ets:new(tab1, [set, public, named_table|gv(ets_opts, Opts, [])]),
-%%     ets_ins(n, N),
-%%     ets_ins(start_time, now()),
-%%     ets_ins(counter, 0),
-%%     start_ets2(Opts).
-
-%% start_ets2(Opts) -> start_ets2(ets_lookup(n), Opts).
-%% start_ets2(N, Opts) when is_integer(N), N > 0 -> 
-%%     Fun = case gv(use_ack, Opts, false) of
-%% 	      true -> fun() -> init_ets_ack(N) end;
-%% 	      _ ->    fun() -> init_ets(N) end
-%% 	  end,
-%%     ets_ins({proc, N}, spawn(Fun)),
-%%     start_ets2(N-1, Opts);
-%% start_ets2(_, _) ->
-%%     ok.
-
-%% stop_ets() -> 
-%%     StopTime = now(),
-%%     stop_ets(ets_lookup(n)),
-%%     ets_lookup(counter) / 
-%% 	(timer:now_diff(StopTime, ets_lookup(start_time)) / 1000000).
-%% stop_ets(N) when is_integer(N), N > 0 ->
-%%     stop_ets(ets_lookup({proc, N})),
-%%     stop_ets(N-1);
-%% stop_ets(Pid) when is_pid(Pid) -> 
-%%     Pid ! stop;
-%% stop_ets(_) ->
-%%     ok.
-
-
-%% init_ets(N) ->
-%%     io:format("ets ~p started~n", [N]),
-%%     loop_ets(N).
-
-%% loop_ets(N) ->
-%%     ets_inc(counter),
-%%     _V = ets_lookup(n),
-%% %%    erlang:yield(),
-%%     receive stop -> io:format("ets ~p stopped~n", [N]), ets_del({proc, N}), ok
-%%     after 0 -> loop_ets(N)
-%%     end.
 
 
 init_ets_ack(N) ->
@@ -318,6 +284,19 @@ loop_now(N) ->
 
 
 %%---------------
+%% no locking/0 stuff
+init_no_lock(N) ->
+    io:format("no lock ~p started~n", [N]),
+    loop_no_lock(N).
+
+loop_no_lock(N) ->
+    receive stop -> io:format("no lock ~p stopped~n", [N]), ets_del({proc, N}), ok
+    after 0 -> loop_no_lock(N)
+    end.
+
+
+
+%%---------------
 %% procs framework
 
 start_procs(N, Opts) ->
@@ -338,11 +317,15 @@ start_procs2(_, _) ->
 
 get_spawn_function(N, Opts) ->
     get_spawn_function2(N, gv(method, Opts)).
+get_spawn_function2(N, no_lock) -> fun() -> init_no_lock(N) end;
 get_spawn_function2(N, now) -> fun() -> init_now(N) end;
 get_spawn_function2(N, ets_ack) -> fun() -> init_ets_ack(N) end;
 get_spawn_function2(N, _) -> fun() -> init_ets(N) end.
 
 
+acknowledge_stop(From, Id, Count) ->
+    From ! {ack, {Id, From}}.
+    
 stop_procs() -> 
     StopTime = now(),
     stop_procs(ets_lookup(n)),
