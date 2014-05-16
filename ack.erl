@@ -5,10 +5,17 @@
 
 -export([r/0]).
 -export([r/1]).
+-export([run/1]).
+-export([run/2]).
+-export([run/3]).
+-export([stop_run/0]).
 
 -export([start_ets/1]).
 -export([start_ets/2]).
 -export([stop_ets/0]).
+
+-export([start_now/1]).
+-export([stop_now/0]).
 
 -export([start_periodically_check_multi_stuff/0]).
 -export([stop_periodically_check_multi_stuff/0]).
@@ -20,6 +27,15 @@
 -export([print_system_info/0]).
 
 
+run(N) when is_integer(N) ->
+    run(N, ets).
+run(N, Method) ->
+    run(N, Method, []).
+run(N, Method, Opts) when is_integer(N), is_atom(Method), is_list(Opts) ->
+    start_procs(N, [{method, Method}|Opts]).
+
+stop_run() ->
+    stop_procs().
 
 
 r() -> r(2).
@@ -132,14 +148,16 @@ stop_cpu_utilisation() ->
 
 print_utilization(L) ->
     maybe_print_cpu_util_header(L),
-    Fmt = "  ~6.2f"++lists:flatten(["  ~4.2f" || _ <- tl(L)]),
-    Args = lists:flatten([element(2,T) || T<- L]),
-    io:format(Fmt++"~n", Args).
+    %% L contains one entry for each core, plus one for the total
+    Ncores = length(L) -1, 
+    Fmt = "  ~6.2f (~2w%)"++lists:flatten(["  ~4.2f" || _ <- tl(L)]),
+    [Tot|Args] = lists:flatten([element(2,T) || T<- L]),
+    io:format(Fmt++"~n", [Tot, round((100*Tot) / Ncores) | Args]).
 
 maybe_print_cpu_util_header(L) ->
     maybe_print_cpu_util_header(should_we_print_header(), L).
 maybe_print_cpu_util_header(true, L) ->
-    Fmt = " ~6w "++lists:flatten(["  ~3w " || _ <- tl(L)]),
+    Fmt = " ~12w "++lists:flatten(["  ~3w " || _ <- tl(L)]),
     Args = lists:flatten([element(1,T) || T<- L]),
     io:format(Fmt++"~n", Args);
 maybe_print_cpu_util_header(_, _) ->
@@ -197,51 +215,26 @@ periodical_loop(Name, T, Fun, State) ->
 
 %%---------------
 %% ETS locking stuff
+
 start_ets(N) ->
     start_ets(N, []).
 start_ets(N, Opts) ->
-    catch ets:delete(tab1),
-    ets:new(tab1, [set, public, named_table|gv(ets_opts, Opts, [])]),
-    ets_ins(n, N),
-    ets_ins(start_time, now()),
-    ets_ins(counter, 0),
-    start_ets2(Opts).
+    start_procs(N, Opts).
 
-start_ets2(Opts) -> start_ets2(ets_lookup(n), Opts).
-start_ets2(N, Opts) when is_integer(N), N > 0 -> 
-    Fun = case gv(use_ack, Opts, false) of
-	      true -> fun() -> init_ets_ack(N) end;
-	      _ ->    fun() -> init_ets(N) end
-	  end,
-    ets_ins({proc, N}, spawn(Fun)),
-    start_ets2(N-1, Opts);
-start_ets2(_, _) ->
-    ok.
-
-stop_ets() -> 
-    StopTime = now(),
-    stop_ets(ets_lookup(n)),
-    ets_lookup(counter) / 
-	(timer:now_diff(StopTime, ets_lookup(start_time)) / 1000000).
-stop_ets(N) when is_integer(N), N > 0 ->
-    stop_ets(ets_lookup({proc, N})),
-    stop_ets(N-1);
-stop_ets(Pid) when is_pid(Pid) -> 
-    Pid ! stop;
-stop_ets(_) ->
-    ok.
+stop_ets() ->
+    stop_procs().
 
 
 init_ets(N) ->
     io:format("ets ~p started~n", [N]),
-    loop_ets(N).
+    %% start on 1 because that's the minimum
+    loop_ets(N, 1).
 
-loop_ets(N) ->
+loop_ets(Id, X) ->
     ets_inc(counter),
-    _V = ets_lookup(n),
-%%    erlang:yield(),
-    receive stop -> io:format("ets ~p stopped~n", [N]), ets_del({proc, N}), ok
-    after 0 -> loop_ets(N)
+    receive {stop, From} ->
+	    acknowledge_stop(From, Id, X)
+    after 0 -> loop_ets(Id, X+1)
     end.
 
 
@@ -269,8 +262,113 @@ ets_lookup(K) ->
 
 
 %%---------------
-%% CPU utilization stuff
+%% now/0 locking stuff
+start_now(N) ->
+    start_now(N, []).
+start_now(N, Opts) ->
+    start_procs(N, [{method, now}|Opts]).
 
+stop_now() ->
+    stop_procs().
+
+
+init_now(N) ->
+    io:format("now ~p started~n", [N]),
+    loop_now(N, 1).
+
+loop_now(Id, N) ->
+    now(),
+    receive {stop, From} -> acknowledge_stop(From, Id, N)
+    after 0 -> loop_now(Id, N+1)
+    end.
+
+%% %%---------------
+%% %% no locking/0 stuff
+%% init_now(N) ->
+%%     io:format("now ~p started~n", [N]),
+%%     loop_now(N, 1).
+
+%% loop_now(Id, N) ->
+%%     now(),
+%%     receive {stop, From} -> acknowledge_stop(From, Id, N)
+%%     after 0 -> loop_now(Id, N+1)
+%%     end.
+
+
+
+%%---------------
+%% no locking/0 stuff
+init_no_lock(Id) ->
+    io:format("no lock ~p started~n", [Id]),
+    loop_no_lock(Id, 1).
+
+loop_no_lock(Id, N) ->
+    receive {stop, From} -> acknowledge_stop(From, Id, N)
+    after 0 -> loop_no_lock(Id, N+1)
+    end.
+
+%% 4cores  116.293.893
+%% 8 cores 143.724.169
+
+%%---------------
+%% procs framework
+
+start_procs(N, Opts) ->
+    catch ets:delete(tab1),
+    ets:new(tab1, [set, public, named_table|gv(ets_opts, Opts, [])]),
+    ets_ins(n, N),
+    ets_ins(start_time, now()),
+    ets_ins(counter, 0),
+    start_procs2(Opts).
+
+start_procs2(Opts) -> start_procs2(ets_lookup(n), Opts).
+start_procs2(N, Opts) when is_integer(N), N > 0 -> 
+    SpawnFun = get_spawn_function(N, Opts),
+    ets_ins({proc, N}, spawn(SpawnFun)),
+    start_procs2(N-1, Opts);
+start_procs2(_, _) ->
+    ok.
+
+get_spawn_function(N, Opts) ->
+    get_spawn_function2(N, gv(method, Opts)).
+get_spawn_function2(N, no_lock) -> fun() -> init_no_lock(N) end;
+get_spawn_function2(N, now) -> fun() -> init_now(N) end;
+get_spawn_function2(N, ets_ack) -> fun() -> init_ets_ack(N) end;
+get_spawn_function2(N, _) -> fun() -> init_ets(N) end.
+
+
+acknowledge_stop(From, Id, Count) ->
+    io:format("proc ~p stopped~n", [Id]), 
+    From ! {ack, {Id, Count}}.
+    
+stop_procs() -> 
+    StopTime = now(),
+    send_stop_procs(ets_lookup(n)),
+    Res1 = gather_procs_return(ets_lookup(n)),
+    Res2 = ets_lookup(counter),
+    io:format("Res1: ~p, Res2: ~p~n", [Res1, Res2]),
+    round(Res1 / (timer:now_diff(StopTime, ets_lookup(start_time)) / 1000000)).
+
+send_stop_procs(N) when is_integer(N), N > 0 ->
+    case ets_lookup({proc, N}) of
+	Pid when is_pid(Pid) -> Pid ! {stop, self()};
+	_ -> ok
+    end,
+    send_stop_procs(N-1);
+send_stop_procs(_) ->
+    ok.
+
+gather_procs_return(N) when is_integer(N), N > 0 ->
+    case ets_lookup({proc, N}) of
+	Pid when is_pid(Pid) -> 
+	    ets_del({proc, N}),
+	    receive {ack, {N, Res}} -> Res+gather_procs_return(N-1)
+	    after 20000 -> gather_procs_return(N-1)
+	    end;
+	_ -> gather_procs_return(N-1)
+    end;
+gather_procs_return(_) ->
+    0.
 
 
 %%---------------
@@ -284,7 +382,7 @@ ets_lookup(K) ->
 
 %%---------------
 %% Got tired of the long proplists:get_value
-%gv(T, L) -> proplists:get_value(T,L).
+gv(T, L) -> proplists:get_value(T,L).
 gv(T, L, D) -> proplists:get_value(T,L, D).
 %% sv(K, V, L) -> lists:keystore(K, 1, L, {K, V}).
 %% dv(K, L) -> lists:keydelete(K, 1, L).
