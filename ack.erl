@@ -282,17 +282,17 @@ loop_now(Id, N) ->
     after 0 -> loop_now(Id, N+1)
     end.
 
-%% %%---------------
-%% %% no locking/0 stuff
-%% init_now(N) ->
-%%     io:format("now ~p started~n", [N]),
-%%     loop_now(N, 1).
+%%---------------
+%% no locking/0 stuff
+init_os_now(N) ->
+    io:format("os now ~p started~n", [N]),
+    loop_os_now(N, 1).
 
-%% loop_now(Id, N) ->
-%%     now(),
-%%     receive {stop, From} -> acknowledge_stop(From, Id, N)
-%%     after 0 -> loop_now(Id, N+1)
-%%     end.
+loop_os_now(Id, N) ->
+    os:timestamp(),
+    receive {stop, From} -> acknowledge_stop(From, Id, N)
+    after 0 -> loop_os_now(Id, N+1)
+    end.
 
 
 
@@ -329,10 +329,12 @@ start_procs2(N, Opts) when is_integer(N), N > 0 ->
 start_procs2(_, _) ->
     ok.
 
+
 get_spawn_function(N, Opts) ->
     get_spawn_function2(N, gv(method, Opts)).
 get_spawn_function2(N, no_lock) -> fun() -> init_no_lock(N) end;
 get_spawn_function2(N, now) -> fun() -> init_now(N) end;
+get_spawn_function2(N, os_now) -> fun() -> init_os_now(N) end;
 get_spawn_function2(N, ets_ack) -> fun() -> init_ets_ack(N) end;
 get_spawn_function2(N, _) -> fun() -> init_ets(N) end.
 
