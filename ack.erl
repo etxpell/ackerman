@@ -227,13 +227,14 @@ stop_ets() ->
 
 init_ets(N) ->
     io:format("ets ~p started~n", [N]),
-    loop_ets(N).
+    %% start on 1 because that's the minimum
+    loop_ets(N, 1).
 
-loop_ets(N) ->
+loop_ets(Id, X) ->
     ets_inc(counter),
-%%    erlang:yield(),
-    receive stop -> io:format("ets ~p stopped~n", [N]), ets_del({proc, N}), ok
-    after 0 -> loop_ets(N)
+    receive {stop, From} ->
+	    acknowledge_stop(From, Id, X)
+    after 0 -> loop_ets(Id, X+1)
     end.
 
 
@@ -273,13 +274,25 @@ stop_now() ->
 
 init_now(N) ->
     io:format("now ~p started~n", [N]),
-    loop_now(N).
+    loop_now(N, 1).
 
-loop_now(N) ->
+loop_now(Id, N) ->
     now(),
-    receive stop -> io:format("now ~p stopped~n", [N]), ets_del({proc, N}), ok
-    after 0 -> loop_now(N)
+    receive {stop, From} -> acknowledge_stop(From, Id, N)
+    after 0 -> loop_now(Id, N+1)
     end.
+
+%% %%---------------
+%% %% no locking/0 stuff
+%% init_now(N) ->
+%%     io:format("now ~p started~n", [N]),
+%%     loop_now(N, 1).
+
+%% loop_now(Id, N) ->
+%%     now(),
+%%     receive {stop, From} -> acknowledge_stop(From, Id, N)
+%%     after 0 -> loop_now(Id, N+1)
+%%     end.
 
 
 
@@ -324,20 +337,37 @@ get_spawn_function2(N, _) -> fun() -> init_ets(N) end.
 
 
 acknowledge_stop(From, Id, Count) ->
-    From ! {ack, {Id, From}}.
+    io:format("proc ~p stopped~n", [Id]), 
+    From ! {ack, {Id, Count}}.
     
 stop_procs() -> 
     StopTime = now(),
-    stop_procs(ets_lookup(n)),
-    ets_lookup(counter) / 
-	(timer:now_diff(StopTime, ets_lookup(start_time)) / 1000000).
-stop_procs(N) when is_integer(N), N > 0 ->
-    stop_procs(ets_lookup({proc, N})),
-    stop_procs(N-1);
-stop_procs(Pid) when is_pid(Pid) -> 
-    Pid ! stop;
-stop_procs(_) ->
+    send_stop_procs(ets_lookup(n)),
+    Res1 = gather_procs_return(ets_lookup(n)),
+    Res2 = ets_lookup(counter),
+    io:format("Res1: ~p, Res2: ~p~n", [Res1, Res2]),
+    round(Res1 / (timer:now_diff(StopTime, ets_lookup(start_time)) / 1000000)).
+
+send_stop_procs(N) when is_integer(N), N > 0 ->
+    case ets_lookup({proc, N}) of
+	Pid when is_pid(Pid) -> Pid ! {stop, self()};
+	_ -> ok
+    end,
+    send_stop_procs(N-1);
+send_stop_procs(_) ->
     ok.
+
+gather_procs_return(N) when is_integer(N), N > 0 ->
+    case ets_lookup({proc, N}) of
+	Pid when is_pid(Pid) -> 
+	    ets_del({proc, N}),
+	    receive {ack, {N, Res}} -> Res+gather_procs_return(N-1)
+	    after 20000 -> gather_procs_return(N-1)
+	    end;
+	_ -> gather_procs_return(N-1)
+    end;
+gather_procs_return(_) ->
+    0.
 
 
 %%---------------
