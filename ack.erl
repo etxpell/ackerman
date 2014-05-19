@@ -215,6 +215,9 @@ periodical_loop(Name, T, Fun, State) ->
 
 %%---------------
 %% ETS locking stuff
+%% ack:run(1, ets). -- 6175531/s
+%% ack:run(8, ets). -- 1083539/s 
+
 
 start_ets(N) ->
     start_ets(N, []).
@@ -307,8 +310,8 @@ loop_no_lock(Id, N) ->
     after 0 -> loop_no_lock(Id, N+1)
     end.
 
-%% 4cores  116.293.893
-%% 8 cores 143.724.169
+%% 4 cores  116.293.893
+%% 8 cores  143.724.169
 
 %%---------------
 %% procs framework
