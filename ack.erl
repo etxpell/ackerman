@@ -230,50 +230,68 @@ stop_now() -> stop_procs().
 
 
 %% no_lock, old framework
-%% 4 cores  116.293.893
-%% 8 cores  143.724.169
+%% 4 processes  116.293.893
+%% 8 processes  143.724.169
 %% -- new framework
-%%  4 cores  49.871.501
-%%  8 cores  94.768.343
-%% 16 cores 105.608.994
+%%  4 processes  49.871.501
+%%  8 processes  94.768.343
+%% 16 processes 105.608.994
 %%
 %% -- os:timestamp
-%%  4 cores  39.672.391
-%%  8 cores  49.608.262
-%% 16 cores  48.353.703
+%%  4 processes  39.672.391
+%%  8 processes  49.608.262
+%% 16 processes  48.353.703
 %%
 %% -- ets
-%%  1 cores  5.442.277
-%%  4 cores  2.340.654
-%%  8 cores  1.110.055
-%% 16 cores  1.130.878
+%%  1 processes  5.442.277
+%%  4 processes  2.340.654
+%%  8 processes  1.110.055
+%% 16 processes  1.130.878
 %%
 %% -- proc_ets
-%%  1 cores  721.987
-%%  4 cores  366.991
-%%  8 cores  369.710
-%% 16 cores  328.275
+%%  1 processes  721.987
+%%  4 processes  366.991
+%%  8 processes  369.710
+%% 16 processes  328.275
 %%
 %% -- proc_ets
-%%  1 cores  721.987
-%%  4 cores  366.991
-%%  8 cores  369.710
-%% 16 cores  328.275
+%%  1 processes  721.987
+%%  4 processes  366.991
+%%  8 processes  369.710
+%% 16 processes  328.275
 %%
 %% -- timer
-%%  1 cores   1.987.127
-%%  4 cores     881.387
-%%  8 cores     459.290
-%% 16 cores     451.397
+%%  1 processes   1.987.127
+%%  4 processes     881.387
+%%  8 processes     459.290
+%% 16 processes     451.397
 %%
 %% -- sysTimer2 (one server)
-%%  1 cores     184.184
-%%  4 cores     210.138
-%%  8 cores     203.343
-%% 16 cores     163.310
-[
+%%  1 processes     184.184
+%%  4 processes     210.138
+%%  8 processes     203.343
+%% 16 processes     163.310
+%%
+%% -- sysTimer2 (4 servers)
+%%  1 processes     158.594
+%%  4 processes     285.868
+%%  8 processes     428.050
+%% 16 processes     500.194
+%%
+%% -- sysTimer2 (8 servers)
+%%  1 processes     156.552
+%%  4 processes     297.625
+%%  8 processes     391.442
+%% 16 processes     505.565
+%%
+%% -- sysTimer2 (25 servers)
+%%  1 processes     131.904
+%%  4 processes     279.437
+%%  8 processes     361.132
+%% 16 processes     447.522
+
 measure(Method) ->
-    print_measure(Method, measure(Method, [1,4,8,16], 5000)).
+    print_measure(Method, measure(Method, [1,4,8,16,32], 5000)).
 
 measure(Method, ProcSpecList, Timeout) ->
     [do_measure(Method, ProcSpec, Timeout) || ProcSpec <- ProcSpecList].
@@ -286,7 +304,7 @@ do_measure(Method, ProcSpec, Timeout) ->
 
 print_measure(Method, L) ->
     io:format("%%~n%% -- ~p~n", [Method]),
-    [io:format("%% ~2w cores ~s~n", [C, nice_i2l(V)]) || {C,V} <- L].
+    [io:format("%% ~2w processes ~s~n", [C, nice_i2l(V)]) || {C,V} <- L].
 
 nice_i2l(Int) ->
     Str = rev(put_dots_where_they_should_be(rev(integer_to_list(Int)))),
