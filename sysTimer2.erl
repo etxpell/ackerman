@@ -18,16 +18,30 @@
 
 
 
--record(s, {name, time_tab, ref_tab}).
+-record(s, {name, time_tab, ref_tab, cancel_count=0, send_after_count=0,
+	    collision_count=0, spare1, spare2, spare3}).
 
--record(timer, {ref, pid, msg, time}).
+-record(timer, {ref, pid, msg, time, spare1, spare2, spare3}).
 
 
 start() -> start([]).
-start(Opts) -> spawn(fun() -> init(Opts) end).
+start(Opts) ->
+    multi_start(Opts).
+
+multi_start(Opts) ->
+    multi_start(all_servers(), Opts).
+multi_start(Servers, Opts) ->
+    [do_start([{name, X}|Opts]) || X <- Servers].
+
+do_start(Opts) -> spawn(fun() -> init(Opts) end).
 
 stop() ->
-    call(main_server(), stop).
+    multi_call(stop).
+
+multi_call(Req) ->
+    multi_call(all_servers(), Req).
+multi_call(Servers, Req) ->
+    [call(X, Req) || X <- Servers].
 
 send_after(Time, Msg) ->
     send_after(Time, self(), Msg).
@@ -44,10 +58,12 @@ cancel(Ref) ->
     call(server_select(Ref), {cancel, Ref}).
 
 get_state() ->
-    call(server_select(undefined), get_state).
+    multi_call(get_state).
+
+
 
 init(Opts) ->
-    Name = gv(name, Opts, main_server()),
+    Name = gv(name, Opts),
     register(Name, self()),
     S = #s{name=Name, 
 	   time_tab= create_time_ets(),
@@ -80,15 +96,20 @@ loop(S) ->
 handle_call(stop, S) ->
     {ok, {stop, terminate(S)}};
 handle_call(get_state, S) ->
-    {get_table_info(S), S};
+    {get_state_info(S), S};
 handle_call({send_at, Timer}, S) ->
-    store_timer(Timer, S),
-    {timer_ref(Timer), S};
+    NewS = adjust_and_set_timer_tables(Timer, S),
+    {timer_ref(Timer), inc_send_after(NewS)};
 handle_call({cancel, Ref}, S) ->
     get_and_del_everything_for_a_ref(Ref, S),
-    {ok, S}.
+    {ok, inc_cancels(S)}.
 
 
+call(Name, Req) when is_atom(Name) ->
+    case whereis(Name) of
+	Pid when is_pid(Pid) -> call(Pid, Req);
+	_ -> no_proc
+    end;
 call(Pid, Req) ->
     Pid ! {call, self(), Req},
     receive
@@ -98,6 +119,14 @@ call(Pid, Req) ->
 send_reply(Pid, {Res, State}) ->
     Pid ! {reply, Res},
     State.
+
+
+inc_collisions(S=#s{collision_count=N}) ->
+    S#s{collision_count=N+1}.
+inc_cancels(S=#s{cancel_count=N}) ->
+    S#s{cancel_count=N+1}.
+inc_send_after(S=#s{send_after_count=N}) ->
+    S#s{send_after_count=N+1}.
 
 check_timeouts(S) ->
     check_all_timeouts(timestamp(), first_time(S), S).
@@ -126,21 +155,24 @@ get_and_del_everything_for_a_timer(Timer=#timer{}, S) ->
     Timer.
 
 
-store_timer(Timer, S) ->
-    store_timer2(adjust_time_to_be_unique(Timer, S), S).
+adjust_and_set_timer_tables(Timer, S) ->
+    store_timer(adjust_time_to_be_unique(Timer, S)).
 
-store_timer2(Timer, S) ->
+store_timer({Timer, S}) ->
     store_time(Timer, S),
-    store_ref(Timer, S).
+    store_ref(Timer, S),
+    S.
 
 
 adjust_time_to_be_unique(Timer, S) ->
     case lookup_time(Timer, S) of
-	undefined -> Timer;
-	_ -> adjust_time_to_be_unique(add_one_to_time(Timer), S)
+	undefined -> {Timer, S};
+	_ -> adjust_time_to_be_unique(add_one_to_time(Timer), 
+				      inc_collisions(S))
     end.
 
 add_one_to_time(Timer=#timer{time=Time}) ->
+    io:format("ADDING ONE!!!~n", []),
     Timer#timer{time=now_add(Time, 1)}.
 
 
@@ -152,12 +184,15 @@ mk_timer(Time, Pid, Msg, Ref) ->
 
 %%---------------
 %% Get a nice table content
-get_table_info(#s{time_tab=Times, ref_tab=Refs}) ->
-    {table_info(time, Times), table_info(ref, Refs)}.
+get_state_info(#s{name=Name, time_tab=Times, ref_tab=Refs, 
+		  cancel_count=NC, send_after_count=NSA,
+		  collision_count=NCol}) ->
+    {Name, {'#cancels', NC}, {'#send_after', NSA}, {'#collisions', NCol}, 
+     {time, table_info(Times)}, {ref, table_info(Refs)}}.
 
-table_info(Name, Tab) ->
-    [{name, Name}, {size, ets:info(Tab, size)} | 
-		    {contents, table_contents(5, Tab)}].
+table_info(Tab) ->
+    [{size, ets:info(Tab, size)},
+     {contents, table_contents(5, Tab)}].
 
 table_contents(N, Tab) -> table_contents(N, Tab, ets:first(Tab)).
 
@@ -240,12 +275,30 @@ timestamp() -> os:timestamp().
 
 %%---------------
 %% Use more than one server in the future
-main_server() -> sysTimer2.
-server_select(_) ->  main_server().
+-define(MAX_PROCS, 8).
+
+all_servers() -> [server_select(N) || N <- lists:seq(1,?MAX_PROCS)].
+
+server_select(Ref) when is_reference(Ref) ->  
+    server_select(hash_ref(Ref));
+%%server_select(X) when X =< 25 ->list_to_atom("sysTimer2_"++integer_to_list(X));
+server_select(1) -> sysTimer2_1;
+server_select(2) -> sysTimer2_2;
+server_select(3) -> sysTimer2_3;
+server_select(4) -> sysTimer2_4;
+server_select(5) -> sysTimer2_5;
+server_select(6) -> sysTimer2_6;
+server_select(7) -> sysTimer2_7;
+server_select(8) -> sysTimer2_8;
+server_select(_) -> undefined.
+
+hash_ref(Ref) ->
+    erlang:phash(Ref, ?MAX_PROCS).
+
 
 %%---------------
 %% Got tired of the long proplists:get_value
-%%gv(T, L) -> proplists:get_value(T,L).
-gv(T, L, D) -> proplists:get_value(T,L, D).
+gv(T, L) -> proplists:get_value(T,L).
+%%gv(T, L, D) -> proplists:get_value(T,L, D).
 %% sv(K, V, L) -> lists:keystore(K, 1, L, {K, V}).
 %% dv(K, L) -> lists:keydelete(K, 1, L).
