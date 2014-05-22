@@ -291,12 +291,19 @@ stop_now() -> stop_procs().
 %% 16 processes     447.522
 
 measure(Method) ->
-    print_measure(Method, measure(Method, [1,4,8,16,32], 5000)).
+    measure(Method, [1,4,8,16,32, 64, 128, 256], 5000).
 
 measure(Method, ProcSpecList, Timeout) ->
-    [do_measure(Method, ProcSpec, Timeout) || ProcSpec <- ProcSpecList].
+    spawn(fun() -> timer:sleep(200),
+		   measure2(Method, ProcSpecList, Timeout) 
+	  end).
+
+measure2(Method, ProcSpecList, Timeout) ->
+    Ms = [do_measure(Method, ProcSpec, Timeout) || ProcSpec <- ProcSpecList],
+    print_measure(Method, Ms).
 
 do_measure(Method, ProcSpec, Timeout) ->
+    io:format("running ~p processes~n", [ProcSpec]),
     run(ProcSpec, Method),
     timer:sleep(Timeout),
     {ProcSpec, stop_run()}.
@@ -304,7 +311,7 @@ do_measure(Method, ProcSpec, Timeout) ->
 
 print_measure(Method, L) ->
     io:format("%%~n%% -- ~p~n", [Method]),
-    [io:format("%% ~2w processes ~s~n", [C, nice_i2l(V)]) || {C,V} <- L].
+    [io:format("%% ~3w processes ~s~n", [C, nice_i2l(V)]) || {C,V} <- L].
 
 nice_i2l(Int) ->
     Str = rev(put_dots_where_they_should_be(rev(integer_to_list(Int)))),
